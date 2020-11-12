@@ -1,0 +1,180 @@
+---
+title: "Hurricane Data Analysis"
+author: "Donghao Xue, Jingwen Xu"
+date: "2020/11/10"
+output: 
+     revealjs::revealjs_presentation:
+        theme: sky
+        highlight: pygments
+        center: false
+        transition: slide
+        fig_width: 7
+        fig_height: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  tidy = "styler",
+  echo = FALSE)
+library(readr)
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(tmap)
+library(sf)
+library(maps)
+library(tidyr)
+library(kableExtra)
+library(methods)
+library(knitr)
+library(kableExtra)
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(gutenbergr)
+library(scales)
+```
+
+## Backgroud
+
+Last week, we completed the mapping about rainfall and hurricane track for certain hurricane. Now we got a dataset from FEMA(https://www.fema.gov/openfema-data-page/public-assistance-funded-projects-details-v1) about the public assistance funded projects details of all kinds of disaster such as severe storm, hurricane and so on. Now we will add these information to the map of hurricane distribution so that we can combine the damage and assistance information to have a deeper understanding of hurricane.
+
+
+## The Hurricane Data Table
+
+```{r}
+disaster <- read.csv("PublicAssistanceFundedProjectsDetails.csv")
+
+## Filter the data about hurricane
+hurricane <- disaster %>% filter(incidentType=="Hurricane")
+## unique(hurricane$incidentType)
+hurricane %<>% select(-3)
+
+## We only study the hurricane declared during 2009-2018.
+hurricane$year <- substr(hurricane$declarationDate,1,4)
+hurricane %<>% filter(year=="2009"|year=="2010"|year=="2011"|year=="2012"|year=="2013"|year=="2014"|year=="2015"|year=="2016"|year=="2017"|year=="2018")
+
+## summary(hurricane$totalObligated-hurricane$federalShareObligated) These two columns are totally the same.
+## summary(hurricane)
+## We found that there are negative values in "projectAmount", "federalShareObligated", "totalObligated" which are not reasonable that should be deleted.
+hurricane %<>% filter(projectAmount>=0&federalShareObligated>=0)
+```
+
+```{r}
+kable(head(hurricane)[,c(1,2,8,10,12,15,16,17)]) %>% kable_styling(font_size=12)
+```
+
+The table provides some information about the hurricane events in USA, such as:
+
+- The declaration Date
+- The name of county
+- The cost of Public Assistance grant project
+- The federal share obligated
+
+
+
+## Mapping: The count of hurricane for each county
+
+```{r message=FALSE, warning=FALSE}
+county <- map_data("county")
+state <- map_data("state")
+hurricane$county <- tolower(hurricane$county)
+hurricane$state <- tolower(hurricane$state)
+Map <- st_as_sf(map('county',plot=F,fill=T))
+Map%<>%separate(ID,c("state","county"),sep=",")
+hurr_count <- hurricane %>% group_by(county,state) %>% summarise(Count=n())
+hurr_count_t <- left_join(Map,hurr_count,by=c("county","state"))
+hurr_count_t$Count[is.na(hurr_count_t$Count)]=0.01
+hurr_count_t$Count <- cut(hurr_count_t$Count,breaks=c(-1,1,8,24,75,85,1615),labels=c("[0,1]","(1,8]","(8,24]","(24,75]","(75,85]","(85,1615]"),ordered_result=TRUE)
+ggplot() + ggtitle("The count of hurricane per county")+
+  geom_polygon(data=county, aes(x=long, y=lat, group=group),
+               color="grey", fill="white", size = .2, alpha=0.9) +
+  geom_polygon(data=state, aes(x=long, y=lat, group=group),
+               color="black", fill="white", size = .2, alpha = .1)+
+  geom_sf(data=hurr_count_t,mapping=aes(fill = Count))+
+  scale_fill_brewer(name="Count of hurricane")
+```
+
+From the map we can see that hurricane happens mostly in the east coast.
+
+## Mapping: The total public assistance cost for each county
+
+```{r message=FALSE, warning=FALSE}
+assist <- hurricane %>% group_by(county,state) %>% summarise(project_t=sum(projectAmount))
+assist_t <- left_join(Map,assist,by=c("county","state"))
+assist_t$project_t[is.na(assist_t$project_t)]=0.01
+assist_t$project_t1 <- cut(assist_t$project_t,breaks=c(-1,1.356e+03,1.701e+05,7.970e+05,4.651e+06,3.120e+07,9.801e+09),labels=c("[0,1.356e+03]","(1.356e+03,1.701e+05]","(1.701e+05,7.970e+05]","(7.970e+05,4.651e+06]","(4.651e+06,3.120e+07]","(3.120e+07,9.801e+09]"),ordered_result = T)
+ggplot() + ggtitle("The total public assistance cost per county")+
+  geom_polygon(data=county, aes(x=long, y=lat, group=group),
+               color="grey", fill="white", size = .2, alpha=0.9) +
+  geom_polygon(data=state, aes(x=long, y=lat, group=group),
+               color="black", fill="white", size = .2, alpha = .1)+
+  geom_sf(data=assist_t,mapping=aes(fill = project_t1))+
+  scale_fill_brewer(name="Public assistance cost",type="seq",palette=4)
+```
+
+
+## Summary
+
+```{r}
+assist_t <- left_join(Map,assist,by=c("county","state"))
+
+summary(na.omit(assist_t$project_t))
+```
+
+From the summary we can see that the range of the data is very large. So the appropriate cut of the scale is important while mapping to show the data information clearly.
+
+
+## Mapping: The total Federal Share Obligated for each county
+
+```{r message=FALSE, warning=FALSE}
+federal <- hurricane %>% group_by(county,state) %>% summarise(federal_total=sum(federalShareObligated))
+federal_t <- left_join(Map,federal,by=c("county","state"))
+federal_t$federal_total[is.na(federal_t$federal_total)]=0.01
+federal_t$federal_total <- cut(federal_t$federal_total,breaks=c(-1,1.017e+03,1.340e+05,6.223e+05,3.638e+06,2.751e+07,8.900e+09),
+labels=c("[0,1.017e+03]","(1.017e+03,1.340e+05]","(1.340e+05,6.223e+05]","(6.223e+05,3.638e+06]","(3.638e+06,2.751e+07]","(2.751e+07,8.809e+09]"),ordered_result = T)
+ggplot() + ggtitle("The total Federal Share Obligated per county")+
+  geom_polygon(data=county, aes(x=long, y=lat, group=group),
+               color="grey", fill="white", size = .2, alpha=0.9) +
+  geom_polygon(data=state, aes(x=long, y=lat, group=group),
+               color="black", fill="white", size = .2, alpha = .1)+
+  geom_sf(data=federal_t,mapping=aes(fill = federal_total))+
+  scale_fill_brewer(name="Federal share obligated",type="seq",palette=7)
+```
+
+
+## Summmary
+
+```{r}
+federal_t <- left_join(Map,federal,by=c("county","state"))
+
+summary(na.omit(federal_t$federal_total))
+```
+
+The data of federal share has a similar distribution with the data of public assistance cost and data about count of hurricane for each county. This is reasonable because the county with more frequent hurricane will need more public assistance and federal share obligated.
+
+
+## Thank You
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
